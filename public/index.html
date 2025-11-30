@@ -1,0 +1,278 @@
+<!doctype html>
+<html lang="th">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Temp Mail Demo</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+          sans-serif;
+        background: #020617;
+        color: white;
+      }
+      .page {
+        min-height: 100vh;
+        display: flex;
+        justify-content: center;
+        padding: 2rem 1rem;
+      }
+      .container {
+        width: 100%;
+        max-width: 800px;
+      }
+      .btn-primary {
+        padding: 0.6rem 1.3rem;
+        border-radius: 999px;
+        border: none;
+        background: #0ea5e9;
+        color: #020617;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      .btn-outline {
+        font-size: 0.7rem;
+        padding: 0.3rem 0.7rem;
+        border-radius: 999px;
+        border: 1px solid #1e293b;
+        background: transparent;
+        color: #e2e8f0;
+        cursor: pointer;
+      }
+      .card {
+        padding: 0.75rem 1rem;
+        border-radius: 0.75rem;
+        background: #020617;
+        border: 1px solid #1e293b;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="page">
+      <div class="container">
+        <h1 style="font-size: 2rem; font-weight: bold; margin-bottom: 0.5rem">
+          Temp Mail Demo
+        </h1>
+        <p style="color: #94a3b8; margin-bottom: 1.5rem; font-size: 0.9rem">
+          สร้างอีเมลชั่วคราว ใช้สมัครเว็บต่าง ๆ โดยไม่ต้องใช้อีเมลจริงของคุณ
+        </p>
+
+        <button id="createBtn" class="btn-primary" style="margin-bottom: 1rem">
+          สร้างอีเมลชั่วคราว
+        </button>
+
+        <div id="mailboxInfo" style="display: none; margin-bottom: 1.5rem" class="card">
+          <p style="font-size: 0.8rem; color: #94a3b8; margin-bottom: 0.25rem">
+            ที่อยู่อีเมลของคุณ
+          </p>
+          <div
+            style="
+              display: flex;
+              justify-content: space-between;
+              align-items: center;
+              gap: 0.5rem;
+            "
+          >
+            <code
+              id="mailboxAddress"
+              style="
+                font-family: monospace;
+                font-size: 0.9rem;
+                word-break: break-all;
+              "
+            ></code>
+            <button id="copyBtn" class="btn-outline" style="color: #38bdf8">
+              คัดลอก
+            </button>
+          </div>
+          <p
+            id="expireText"
+            style="font-size: 0.7rem; color: #64748b; margin-top: 0.5rem"
+          ></p>
+        </div>
+
+        <div id="inboxSection" style="display: none">
+          <div
+            style="
+              display: flex;
+              justify-content: space-between;
+              align-items: center;
+              margin-bottom: 0.5rem;
+            "
+          >
+            <h2 style="font-size: 1rem; font-weight: 600">Inbox</h2>
+            <button id="refreshBtn" class="btn-outline">รีเฟรช</button>
+          </div>
+
+          <p
+            id="emptyText"
+            style="font-size: 0.8rem; color: #64748b; margin-top: 0.2rem"
+          >
+            ยังไม่มีอีเมล
+          </p>
+
+          <div
+            id="messagesList"
+            style="
+              margin-top: 0.5rem;
+              display: flex;
+              flex-direction: column;
+              gap: 0.5rem;
+            "
+          ></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- socket.io client from server -->
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+      const createBtn = document.getElementById("createBtn");
+      const mailboxInfo = document.getElementById("mailboxInfo");
+      const mailboxAddressEl = document.getElementById("mailboxAddress");
+      const copyBtn = document.getElementById("copyBtn");
+      const expireText = document.getElementById("expireText");
+      const inboxSection = document.getElementById("inboxSection");
+      const emptyText = document.getElementById("emptyText");
+      const messagesList = document.getElementById("messagesList");
+      const refreshBtn = document.getElementById("refreshBtn");
+
+      let currentMailbox = null;
+      const socket = io();
+
+      async function createMailbox() {
+        try {
+          createBtn.disabled = true;
+          createBtn.textContent = "กำลังสร้าง...";
+
+          const res = await fetch("/api/mailbox", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" }
+          });
+
+          if (!res.ok) throw new Error("create mailbox failed");
+          const data = await res.json();
+
+          currentMailbox = data;
+
+          mailboxAddressEl.textContent = data.address;
+          expireText.textContent = "หมดอายุใน: " + new Date(data.expiresAt).toLocaleString();
+
+          mailboxInfo.style.display = "block";
+          inboxSection.style.display = "block";
+          emptyText.style.display = "block";
+          messagesList.innerHTML = "";
+
+          createBtn.textContent = "สุ่มอีเมลใหม่";
+          createBtn.disabled = false;
+
+          socket.emit("joinMailbox", data.id);
+        } catch (err) {
+          console.error(err);
+          alert("สร้างอีเมลไม่สำเร็จ");
+          createBtn.disabled = false;
+          createBtn.textContent = "สร้างอีเมลชั่วคราว";
+        }
+      }
+
+      async function loadMessages() {
+        if (!currentMailbox) return;
+        try {
+          refreshBtn.disabled = true;
+
+          const res = await fetch(`/api/mailbox/${currentMailbox.id}/messages`);
+          if (!res.ok) throw new Error("load messages failed");
+
+          const data = await res.json();
+          renderMessages(data);
+        } catch (err) {
+          console.error(err);
+          alert("โหลดอีเมลไม่สำเร็จ");
+        } finally {
+          refreshBtn.disabled = false;
+        }
+      }
+
+      function renderMessages(messages) {
+        messagesList.innerHTML = "";
+        if (!messages || messages.length === 0) {
+          emptyText.style.display = "block";
+          return;
+        }
+        emptyText.style.display = "none";
+
+        messages.forEach((m) => {
+          const card = document.createElement("div");
+          card.className = "card";
+
+          const header = document.createElement("div");
+          header.style.display = "flex";
+          header.style.justifyContent = "space-between";
+          header.style.alignItems = "center";
+          header.style.gap = "0.5rem";
+
+          const subject = document.createElement("p");
+          subject.style.fontSize = "0.9rem";
+          subject.style.fontWeight = "600";
+          subject.textContent = m.subject || "(ไม่มีหัวเรื่อง)";
+
+          const time = document.createElement("span");
+          time.style.fontSize = "0.7rem";
+          time.style.color = "#64748b";
+          time.textContent = m.receivedAt
+            ? new Date(m.receivedAt).toLocaleTimeString()
+            : "";
+
+          header.appendChild(subject);
+          header.appendChild(time);
+
+          const from = document.createElement("p");
+          from.style.fontSize = "0.75rem";
+          from.style.color = "#94a3b8";
+          from.style.marginTop = "0.15rem";
+          from.textContent = "จาก: " + m.from;
+
+          const body = document.createElement("p");
+          body.style.fontSize = "0.75rem";
+          body.style.color = "#e2e8f0";
+          body.style.marginTop = "0.4rem";
+          body.style.whiteSpace = "pre-wrap";
+          if (m.text) {
+            body.textContent = m.text.length > 200 ? m.text.slice(0, 200) + "..." : m.text;
+          } else {
+            body.textContent = "(ไม่มีเนื้อความแบบ text หรือถูกส่งมาเป็น HTML เท่านั้น)";
+          }
+
+          card.appendChild(header);
+          card.appendChild(from);
+          card.appendChild(body);
+          messagesList.appendChild(card);
+        });
+      }
+
+      // socket event สำหรับอีเมลใหม่แบบ realtime
+      socket.on("newMessage", (msg) => {
+        if (!currentMailbox) return;
+
+        // แทรกด้านบนสุด
+        const current = Array.from(messagesList.children).map((card) => card._data);
+        const newList = [msg, ...current];
+        renderMessages(newList);
+      });
+
+      createBtn.addEventListener("click", createMailbox);
+
+      copyBtn.addEventListener("click", () => {
+        if (!currentMailbox) return;
+        navigator.clipboard.writeText(currentMailbox.address);
+        alert("คัดลอกอีเมลแล้ว");
+      });
+
+      refreshBtn.addEventListener("click", loadMessages);
+    </script>
+  </body>
+</html>
